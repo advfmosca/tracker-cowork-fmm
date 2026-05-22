@@ -965,6 +965,7 @@ const TASKS = [
   ]
 ];
 const TARIFFA_BASE = 60;
+const MULT_RISPARMIATE = 1.0;
 const TODAY = new Date(2026, 4, 22);
 
 // ===== Calcoli aggregati =====
@@ -1015,25 +1016,40 @@ const prevMonthKey = prevMonthDate.getFullYear() + "-" + String(prevMonthDate.ge
 const minReviewMTD     = (byMonth[curMonthKey]  || {review: 0}).review;
 const minReviewPrev    = (byMonth[prevMonthKey] || {review: 0}).review;
 const minClaudeMTD     = (byMonth[curMonthKey]  || {claude: 0}).claude;
+const minClaudePrev    = (byMonth[prevMonthKey] || {claude: 0}).claude;
 
-const eurMTD       = minReviewMTD  / 60 * TARIFFA_BASE;
-const eurPrev      = minReviewPrev / 60 * TARIFFA_BASE;
+// NUOVA FORMULA FATTURATO:
+// (ore mie + ore Claude + ore risparmiate) × tariffa
+// dove ore risparmiate = ore Claude × MULT_RISPARMIATE
+const oreReviewMTD     = minReviewMTD / 60;
+const oreClaudeMTD     = minClaudeMTD / 60;
+const oreRisparmiateMTD = oreClaudeMTD * MULT_RISPARMIATE;
+const oreTotaleMTD     = oreReviewMTD + oreClaudeMTD + oreRisparmiateMTD;
+
+const oreReviewPrev     = minReviewPrev / 60;
+const oreClaudePrev     = minClaudePrev / 60;
+const oreRisparmiatePrev = oreClaudePrev * MULT_RISPARMIATE;
+const oreTotalePrev     = oreReviewPrev + oreClaudePrev + oreRisparmiatePrev;
+
+const eurMTD       = oreTotaleMTD  * TARIFFA_BASE;
+const eurPrev      = oreTotalePrev * TARIFFA_BASE;
 const eurProj      = (daysElapsedMTD > 0) ? (eurMTD / daysElapsedMTD * daysInCurMonth) : 0;
-const oreReviewMTD = minReviewMTD / 60;
-const oreClaudeMTD = minClaudeMTD / 60;
 const monthNames = ["Gennaio","Febbraio","Marzo","Aprile","Maggio","Giugno",
                     "Luglio","Agosto","Settembre","Ottobre","Novembre","Dicembre"];
 
 const eurData = [
   { cls: "total eur", label: monthNames[curMonth] + " maturato",
     value: "€ " + eurMTD.toFixed(0),
-    sub: oreReviewMTD.toFixed(1) + " h tue · " + daysElapsedMTD + "/" + daysInCurMonth + " gg" },
+    sub: oreTotaleMTD.toFixed(1) + " h · " + daysElapsedMTD + "/" + daysInCurMonth + " gg" },
   { cls: "eur proj", label: "Proiezione fine " + monthNames[curMonth].toLowerCase(),
     value: "€ " + eurProj.toFixed(0),
     sub: "trend lineare attuale" },
+  { cls: "eur", label: "Ore risparmiate (mese)",
+    value: oreRisparmiateMTD.toFixed(1) + " h",
+    sub: "Claude × " + MULT_RISPARMIATE.toFixed(1) + " moltiplicatore" },
   { cls: "eur", label: monthNames[(curMonth + 11) % 12] + " (precedente)",
     value: "€ " + eurPrev.toFixed(0),
-    sub: ((byMonth[prevMonthKey] || {review: 0}).review / 60).toFixed(1) + " h tue · totale" },
+    sub: oreTotalePrev.toFixed(1) + " h · totale" },
   { cls: "eur", label: "Delta vs mese precedente",
     value: (eurPrev > 0 ? ((eurProj - eurPrev) / eurPrev * 100).toFixed(0) + "%" : "—"),
     sub: "proiezione vs precedente" },
@@ -1057,8 +1073,8 @@ new Chart(document.getElementById("monthChart"), {
       return monthNames[m - 1].slice(0, 3) + " " + String(y).slice(2);
     }),
     datasets: [{
-      label: "€ stimati (review × tariffa)",
-      data: monthKeys.map(k => byMonth[k].review / 60 * TARIFFA_BASE),
+      label: "€ stimati ((review + Claude + risparmiate) × tariffa)",
+      data: monthKeys.map(k => (byMonth[k].review + byMonth[k].claude + byMonth[k].claude * MULT_RISPARMIATE) / 60 * TARIFFA_BASE),
       backgroundColor: monthKeys.map(k => k === curMonthKey ? "#1c1c1e" : "#9a9aa0"),
       borderRadius: 4,
     }]
@@ -1069,7 +1085,11 @@ new Chart(document.getElementById("monthChart"), {
       legend: { display: false },
       tooltip: {
         callbacks: {
-          label: ctx => "€ " + ctx.parsed.y.toFixed(0) + " (" + (byMonth[monthKeys[ctx.dataIndex]].review/60).toFixed(1) + " h tue, " + byMonth[monthKeys[ctx.dataIndex]].tasks + " task)"
+          label: ctx => {
+            const m = byMonth[monthKeys[ctx.dataIndex]];
+            const oreT = ((m.review + m.claude + m.claude * MULT_RISPARMIATE) / 60).toFixed(1);
+            return "€ " + ctx.parsed.y.toFixed(0) + " (" + oreT + " h totali, " + m.tasks + " task)";
+          }
         }
       }
     },
@@ -1081,12 +1101,18 @@ new Chart(document.getElementById("monthChart"), {
 });
 
 // ===== KPI =====
+const oreRisparmiateTot = (minClaudeTot / 60) * MULT_RISPARMIATE;
+const oreTotaleEquiv    = (minReviewTot + minClaudeTot) / 60 + oreRisparmiateTot;
+const eurValoreTot      = oreTotaleEquiv * TARIFFA_BASE;
+
 const kpiData = [
   { cls: "total", label: "Ore tue (review)", value: (minReviewTot/60).toFixed(1) + " h",
     sub: "tempo umano effettivo" },
   { cls: "",      label: "Ore Claude",       value: (minClaudeTot/60).toFixed(1) + " h",
     sub: "tempo macchina" },
-  { cls: "accent",label: "Leva Cowork",      value: leverage.toFixed(1) + "×",
+  { cls: "accent",label: "Ore risparmiate",  value: oreRisparmiateTot.toFixed(1) + " h",
+    sub: "Claude × " + MULT_RISPARMIATE.toFixed(1) + " (lavoro non fatto da te)" },
+  { cls: "",      label: "Leva Cowork",      value: leverage.toFixed(1) + "×",
     sub: "Claude vs il tuo tempo" },
   { cls: "",      label: "Ore tue / giorno", value: oreReviewDay.toFixed(1) + " h",
     sub: "media su " + distinctDays + " gg" },
@@ -1094,10 +1120,8 @@ const kpiData = [
     sub: interactive.length + " interattivi" },
   { cls: "",      label: "Token totali",     value: (tokenTot/1000).toFixed(2) + "M",
     sub: tokenTot.toLocaleString() + " k" },
-  { cls: "ok",    label: "€ valore tempo",   value: "€ " + (minReviewTot/60*TARIFFA_BASE).toFixed(0),
-    sub: "@" + TARIFFA_BASE + " €/h tuo" },
-  { cls: "",      label: "Giorni loggati",   value: distinctDays,
-    sub: "intervallo dati" },
+  { cls: "ok",    label: "€ valore tempo",   value: "€ " + eurValoreTot.toFixed(0),
+    sub: "(review+Claude+risparmiate) × " + TARIFFA_BASE + "€/h" },
 ];
 const kpiGrid = document.getElementById("kpiGrid");
 kpiData.forEach(k => {
